@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Ensure relative asset resolution when the site is opened from a non-root path -->
+    <base href="/shop/" />
+    <title>Fradomos - WebShop</title>
+    <meta name="description" content="Discover a wide range of products at Fradomos WebShop." />
+    <meta name="author" content="Fradomos" />
+
+    <link rel="icon" href="/shop/favicon.png" />
+    <meta property="og:title" content="Fradomos - WebShop" />
+    <meta property="og:description" content="Discover a wide range of products at Fradomos WebShop." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/shop/favicon.png" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="Fradomos" />
+    <meta name="twitter:image" content="/shop/favicon.png" />
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <!-- Vite entry should point to the source module; Vite will rewrite this when building with base=/shop/ -->
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
