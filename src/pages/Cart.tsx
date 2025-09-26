@@ -1,17 +1,108 @@
+import { useEffect, useState } from 'react';
 import { Minus, Plus, Trash2, ShoppingBag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import Header from '@/components/layout/Header';
-import { useCart } from '@/hooks/useCart';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import axios from 'axios';
+
+const API_URL = 'https://shop.fradomos.al';
+
+type CartItem = {
+  id: number;
+  product_id: number;
+  quantity: number;
+  added_at: string;
+  name: string;
+  price: number;
+  image?: string; // Add image field
+};
 
 const Cart = () => {
-  const { items, updateQuantity, removeFromCart, getTotalPrice, clearCart } = useCart();
-  const totalPrice = getTotalPrice();
+  const [items, setItems] = useState<CartItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  // Fetch cart items
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+    axios.get(`${API_URL}/cart`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    .then(async res => {
+      const data = res.data as { items: CartItem[] };
+      // Fetch images for each product
+      const itemsWithImages = await Promise.all(
+        data.items.map(async (item) => {
+          // Try to get image from API (same logic as ProductDetail)
+          const imageUrl = `${API_URL}/product-images/${encodeURIComponent(item.product_id)}/image`;
+          // Optionally, you could check if image exists, but for simplicity just use the URL
+          return { ...item, image: imageUrl };
+        })
+      );
+      setItems(itemsWithImages);
+      setLoading(false);
+    })
+    .catch((err) => {
+      if (err?.response?.status === 401) {
+        navigate('/login');
+      } else {
+        setLoading(false);
+      }
+    });
+  }, [navigate]);
+
+  // Update quantity
+  const updateQuantity = async (itemId: number, quantity: number) => {
+    if (quantity < 1) return;
+    const token = localStorage.getItem('token');
+    await axios.put(`${API_URL}/cart/items/${itemId}`, { quantity }, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setItems(items =>
+      items.map(item =>
+        item.id === itemId ? { ...item, quantity } : item
+      )
+    );
+  };
+
+  // Remove item
+  const removeFromCart = async (itemId: number) => {
+    const token = localStorage.getItem('token');
+    await axios.delete(`${API_URL}/cart/items/${itemId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setItems(items => items.filter(item => item.id !== itemId));
+  };
+
+  // Clear cart
+  const clearCart = async () => {
+    // Remove all items one by one
+    for (const item of items) {
+      await removeFromCart(item.id);
+    }
+  };
+
+  const totalPrice = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const tax = totalPrice * 0.08; // 8% tax
   const shipping = totalPrice > 50 ? 0 : 9.99;
   const finalTotal = totalPrice + tax + shipping;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <div className="container mx-auto px-4 py-16 text-center">
+          Loading...
+        </div>
+      </div>
+    );
+  }
 
   if (items.length === 0) {
     return (
@@ -38,7 +129,6 @@ const Cart = () => {
   return (
     <div className="min-h-screen bg-background">
       <Header />
-      
       <div className="container mx-auto px-4 py-8">
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-bold">Shopping Cart</h1>
@@ -51,29 +141,33 @@ const Cart = () => {
           {/* Cart Items */}
           <div className="lg:col-span-2 space-y-4">
             {items.map((item) => (
-              <Card key={item.product.id}>
+              <Card key={item.id}>
                 <CardContent className="p-6">
                   <div className="flex gap-4">
                     <div className="aspect-square w-20 h-20 rounded-lg overflow-hidden bg-muted">
-                      <img
-                        src={item.product.image}
-                        alt={item.product.name}
-                        className="w-full h-full object-cover"
-                      />
+                      {item.image ? (
+                        <img
+                          src={item.image}
+                          alt={item.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-muted-foreground bg-muted">
+                          <ShoppingBag className="h-10 w-10" />
+                        </div>
+                      )}
                     </div>
                     
                     <div className="flex-1 space-y-2">
                       <div className="flex items-start justify-between">
                         <div>
-                          <h3 className="font-semibold">{item.product.name}</h3>
-                          <p className="text-sm text-muted-foreground">
-                            {item.product.category}
-                          </p>
+                          <h3 className="font-semibold">{item.name}</h3>
+                          {/* No category in API response */}
                         </div>
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => removeFromCart(item.product.id)}
+                          onClick={() => removeFromCart(item.id)}
                           className="text-destructive hover:text-destructive"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -85,7 +179,7 @@ const Cart = () => {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => updateQuantity(item.product.id, item.quantity - 1)}
+                            onClick={() => updateQuantity(item.id, item.quantity - 1)}
                             disabled={item.quantity <= 1}
                           >
                             <Minus className="h-4 w-4" />
@@ -98,7 +192,7 @@ const Cart = () => {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
+                            onClick={() => updateQuantity(item.id, item.quantity + 1)}
                           >
                             <Plus className="h-4 w-4" />
                           </Button>
@@ -106,10 +200,10 @@ const Cart = () => {
                         
                         <div className="text-right">
                           <p className="font-semibold">
-                            ${(item.product.price * item.quantity).toFixed(2)}
+                            ${(item.price * item.quantity).toFixed(2)}
                           </p>
                           <p className="text-sm text-muted-foreground">
-                            ${item.product.price} each
+                            ${item.price} each
                           </p>
                         </div>
                       </div>

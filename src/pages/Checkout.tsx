@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { CreditCard, Truck, Shield, ArrowLeft } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Truck, Shield, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,13 +11,14 @@ import Header from '@/components/layout/Header';
 import { useCart } from '@/hooks/useCart';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from '@/hooks/use-toast';
+import axios from 'axios';
 
 const Checkout = () => {
-  const { items, getTotalPrice, clearCart } = useCart();
   const navigate = useNavigate();
   const [shippingMethod, setShippingMethod] = useState('standard');
-  const [paymentMethod, setPaymentMethod] = useState('card');
-  
+  const [cartItems, setCartItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
   const [shippingForm, setShippingForm] = useState({
     firstName: '',
     lastName: '',
@@ -30,14 +31,25 @@ const Checkout = () => {
     country: 'US',
   });
 
-  const [paymentForm, setPaymentForm] = useState({
-    cardNumber: '',
-    expiryDate: '',
-    cvv: '',
-    nameOnCard: '',
-  });
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+    axios.get<{ items: any[] }>('https://shop.fradomos.al/cart', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    .then(res => {
+      setCartItems(res.data.items);
+      setLoading(false);
+    })
+    .catch(() => {
+      navigate('/login');
+    });
+  }, [navigate]);
 
-  const subtotal = getTotalPrice();
+  const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const tax = subtotal * 0.08;
   const shipping = shippingMethod === 'express' ? 15.99 : shippingMethod === 'overnight' ? 29.99 : subtotal > 50 ? 0 : 9.99;
   const total = subtotal + tax + shipping;
@@ -46,24 +58,72 @@ const Checkout = () => {
     setShippingForm(prev => ({ ...prev, [field]: value }));
   };
 
-  const handlePaymentChange = (field: string, value: string) => {
-    setPaymentForm(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Simulate order processing
-    toast({
-      title: "Order Placed Successfully!",
-      description: `Your order of $${total.toFixed(2)} has been confirmed. You'll receive an email confirmation shortly.`,
-    });
-    
-    clearCart();
-    navigate('/');
+    const token = localStorage.getItem('token');
+    if (!token) {
+      toast({
+        title: "Not Logged In",
+        description: "Please log in to place an order.",
+        variant: "destructive",
+      });
+      navigate('/login');
+      return;
+    }
+    try {
+      await axios.post(
+        'https://shop.fradomos.al/orders',
+        {
+          first_name: shippingForm.firstName,
+          last_name: shippingForm.lastName,
+          email: shippingForm.email,
+          phone: shippingForm.phone,
+          address: shippingForm.address,
+          city: shippingForm.city,
+          state: shippingForm.state,
+          zip_code: shippingForm.zipCode,
+          country: shippingForm.country,
+          shipping_method: shippingMethod,
+          subtotal,
+          tax,
+          shipping,
+          total,
+          status: 'pending',
+          items: cartItems.map(item => ({
+            product_id: item.product_id,
+            quantity: item.quantity,
+            price: item.price
+          }))
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      toast({
+        title: "Order Placed Successfully!",
+        description: `Your order of $${total.toFixed(2)} has been confirmed. You'll receive an email confirmation shortly.`,
+      });
+      // Optionally clear cart here by refetching or redirecting
+      navigate('/');
+    } catch (err: any) {
+      toast({
+        title: "Order Failed",
+        description: err?.response?.data?.error || "Could not place order.",
+        variant: "destructive",
+      });
+    }
   };
 
-  if (items.length === 0) {
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <div className="container mx-auto px-4 py-16 text-center">
+          Loading...
+        </div>
+      </div>
+    );
+  }
+
+  if (cartItems.length === 0) {
     return (
       <div className="min-h-screen bg-background">
         <Header />
@@ -87,7 +147,6 @@ const Checkout = () => {
   return (
     <div className="min-h-screen bg-background">
       <Header />
-      
       <div className="container mx-auto px-4 py-8">
         <div className="flex items-center gap-4 mb-8">
           <Link to="/cart">
@@ -202,129 +261,6 @@ const Checkout = () => {
                   </div>
                 </CardContent>
               </Card>
-
-              {/* Shipping Method */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Shipping Method</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <RadioGroup value={shippingMethod} onValueChange={setShippingMethod}>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between p-3 border rounded-lg">
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="standard" id="standard" />
-                          <Label htmlFor="standard">
-                            <div>
-                              <p className="font-medium">Standard Shipping</p>
-                              <p className="text-sm text-muted-foreground">5-7 business days</p>
-                            </div>
-                          </Label>
-                        </div>
-                        <span className="font-medium">
-                          {subtotal > 50 ? 'Free' : '$9.99'}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3 border rounded-lg">
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="express" id="express" />
-                          <Label htmlFor="express">
-                            <div>
-                              <p className="font-medium">Express Shipping</p>
-                              <p className="text-sm text-muted-foreground">2-3 business days</p>
-                            </div>
-                          </Label>
-                        </div>
-                        <span className="font-medium">$15.99</span>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3 border rounded-lg">
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="overnight" id="overnight" />
-                          <Label htmlFor="overnight">
-                            <div>
-                              <p className="font-medium">Overnight Shipping</p>
-                              <p className="text-sm text-muted-foreground">Next business day</p>
-                            </div>
-                          </Label>
-                        </div>
-                        <span className="font-medium">$29.99</span>
-                      </div>
-                    </div>
-                  </RadioGroup>
-                </CardContent>
-              </Card>
-
-              {/* Payment Information */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <CreditCard className="h-5 w-5" />
-                    Payment Information
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <RadioGroup value={paymentMethod} onValueChange={setPaymentMethod}>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="card" id="card" />
-                      <Label htmlFor="card">Credit/Debit Card</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="paypal" id="paypal" />
-                      <Label htmlFor="paypal">PayPal</Label>
-                    </div>
-                  </RadioGroup>
-
-                  {paymentMethod === 'card' && (
-                    <div className="space-y-4 mt-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="cardNumber">Card Number</Label>
-                        <Input
-                          id="cardNumber"
-                          placeholder="1234 5678 9012 3456"
-                          value={paymentForm.cardNumber}
-                          onChange={(e) => handlePaymentChange('cardNumber', e.target.value)}
-                          required
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-4">
-                        <div className="col-span-2 space-y-2">
-                          <Label htmlFor="expiryDate">Expiry Date</Label>
-                          <Input
-                            id="expiryDate"
-                            placeholder="MM/YY"
-                            value={paymentForm.expiryDate}
-                            onChange={(e) => handlePaymentChange('expiryDate', e.target.value)}
-                            required
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="cvv">CVV</Label>
-                          <Input
-                            id="cvv"
-                            placeholder="123"
-                            value={paymentForm.cvv}
-                            onChange={(e) => handlePaymentChange('cvv', e.target.value)}
-                            required
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="nameOnCard">Name on Card</Label>
-                        <Input
-                          id="nameOnCard"
-                          value={paymentForm.nameOnCard}
-                          onChange={(e) => handlePaymentChange('nameOnCard', e.target.value)}
-                          required
-                        />
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
             </div>
 
             {/* Order Summary */}
@@ -336,21 +272,27 @@ const Checkout = () => {
                 <CardContent className="space-y-4">
                   {/* Items */}
                   <div className="space-y-3">
-                    {items.map((item) => (
-                      <div key={item.product.id} className="flex items-center gap-3">
-                        <div className="aspect-square w-12 h-12 rounded-lg overflow-hidden bg-muted">
+                    {cartItems.map((item) => (
+                      <div key={item.id} className="flex items-center gap-3">
+                        <div className="aspect-square w-12 h-12 rounded-lg overflow-hidden bg-muted flex items-center justify-center">
                           <img
-                            src={item.product.image}
-                            alt={item.product.name}
-                            className="w-full h-full object-cover"
+                            src={
+                              item.image
+                                ? item.image
+                                : item.product_id || item.id
+                                  ? `https://shop.fradomos.al/product-images/${encodeURIComponent(item.product_id ?? item.id)}/image`
+                                  : '/favicon.png'
+                            }
+                            alt={item.name}
+                            className="object-cover w-full h-full"
                           />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">{item.product.name}</p>
+                          <p className="font-medium truncate">{item.name}</p>
                           <p className="text-sm text-muted-foreground">Qty: {item.quantity}</p>
                         </div>
                         <p className="font-medium">
-                          ${(item.product.price * item.quantity).toFixed(2)}
+                          ${(item.price * item.quantity).toFixed(2)}
                         </p>
                       </div>
                     ))}

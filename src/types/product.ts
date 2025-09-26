@@ -1,4 +1,6 @@
 export interface Product {
+  stock_quantity: any;
+  category_name: string;
   product_id: string;
   id: string;
   name: string;

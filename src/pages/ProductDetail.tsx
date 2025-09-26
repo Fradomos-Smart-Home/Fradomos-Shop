@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Heart, Share2, ShoppingCart, Truck, Shield, RotateCcw, Star } from 'lucide-react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Share2, ShoppingCart, Truck, Shield, RotateCcw, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,11 +9,12 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Textarea } from '@/components/ui/textarea';
 import Header from '@/components/layout/Header';
 import StarRating from '@/components/ui/star-rating';
-import { getProductById, getComments } from '@/data/products';
+import { getProductById } from '@/data/products';
 import type { Product, Review } from '@/types/product';
 import { useCart } from '@/hooks/useCart';
 import { useFavorites } from '@/hooks/useFavorites';
 import { toast } from '@/hooks/use-toast';
+import axios from 'axios';
 
 const ProductDetail = () => {
   // Use string id, fallback to empty string if undefined
@@ -29,7 +30,14 @@ const ProductDetail = () => {
   const [productReviews, setProductReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [reviewStats, setReviewStats] = useState<{ count: number; avg: number }>({ count: 0, avg: 0 });
+  const [visibleReviews, setVisibleReviews] = useState(5);
+  const [stockQty, setStockQty] = useState<number | null>(null);
+  const [inStock, setInStock] = useState<boolean>(true);
+  const [features, setFeatures] = useState<string[]>([]);
+  const navigate = useNavigate();
 
+  // Fetch product details from API
   useEffect(() => {
     let mounted = true;
     if (!id) {
@@ -57,19 +65,81 @@ const ProductDetail = () => {
           originalPrice: p.original_price != null ? Number(p.original_price) : undefined,
           image: `${apiBase}/product-images/${encodeURIComponent(p.product_id ?? p.id ?? id)}/image`,
           category: p.category ?? p.category_name ?? p.category_id ?? 'Uncategorized',
+          category_name: p.category_name ?? p.category ?? 'Uncategorized',
           rating: p.rating != null ? Number(p.rating) : 0,
           reviewCount: p.review_count != null ? Number(p.review_count) : 0,
           features: Array.isArray(p.features) ? p.features : [],
           inStock: p.in_stock != null ? Boolean(p.in_stock) : ((p.stock_quantity ?? 0) > 0),
+          product_id: p.product_id ?? p.id ?? id,
+          stock_quantity: undefined
         };
 
         if (!mounted) return;
         setProduct(mappedProduct);
 
-        // Fetch comments/reviews
-        const comments = await getComments(id);
-        if (!mounted) return;
-        setProductReviews(comments);
+        // Fetch features from API
+        try {
+          const featuresRes = await fetch(`https://shop.fradomos.al/products/${encodeURIComponent(id)}/features`);
+          if (featuresRes.ok) {
+            const featuresData = await featuresRes.json();
+            if (mounted && Array.isArray(featuresData)) {
+              setFeatures(featuresData.map((f: any) => typeof f === 'string' ? f : (f?.feature ?? '')));
+            }
+          }
+        } catch {
+          // ignore features error, fallback to product.features
+        }
+
+        // Fetch stock count
+        try {
+          const stockRes = await fetch(`https://shop.fradomos.al/products/${encodeURIComponent(id)}/in_stock`);
+          if (stockRes.ok) {
+            const stockData = await stockRes.json();
+            const qty = typeof stockData === 'number' ? stockData : (stockData?.in_stock ?? null);
+            if (mounted) {
+              setStockQty(qty);
+              setInStock(qty > 0);
+            }
+          } else {
+            if (mounted) {
+              setStockQty(null);
+              setInStock(false);
+            }
+          }
+        } catch {
+          if (mounted) {
+            setStockQty(null);
+            setInStock(false);
+          }
+        }
+
+        // Fetch reviews from API
+        const reviewsRes = await fetch(`https://shop.fradomos.al/product-reviews/product/${id}`);
+        const text = await reviewsRes.text();
+        let reviews: any[] = [];
+        try {
+          reviews = JSON.parse(text);
+        } catch {
+          reviews = [];
+        }
+        // Normalize review fields for display
+        const normalizedReviews = reviews.map((r: any) => ({
+          id: r.id,
+          productId: r.product_id ?? id,
+          userName: r.reviewer_name || r.user_name || r.userName || r.name || r.buyer_name || r.user || 'Anonymous',
+          rating: r.rating,
+          comment: r.comment,
+          verified: r.verified,
+          date: r.created_at ? new Date(r.created_at).toLocaleDateString() : '',
+        }));
+        if (mounted) setProductReviews(normalizedReviews);
+
+        // Calculate review stats from fetched reviews
+        if (mounted) {
+          const count = normalizedReviews.length;
+          const avg = count > 0 ? normalizedReviews.reduce((sum, r) => sum + (r.rating || 0), 0) / count : 0;
+          setReviewStats({ count, avg: Number(avg.toFixed(2)) });
+        }
       } catch (err: any) {
         console.error('Failed to load product or comments', err);
         if (mounted) setError(err.message || 'Failed to load product');
@@ -81,6 +151,14 @@ const ProductDetail = () => {
     load();
     return () => { mounted = false; };
   }, [id]);
+
+  // State for paginated reviews
+  // (removed duplicate declaration)
+
+  // Reset visible reviews when productReviews change (e.g. after submitting a review)
+  useEffect(() => {
+    setVisibleReviews(5);
+  }, [productReviews]);
 
   if (loading) {
     return (
@@ -107,8 +185,36 @@ const ProductDetail = () => {
     );
   }
 
-  const handleAddToCart = () => {
-    if (product) addToCart(product, quantity);
+  const handleAddToCart = async () => {
+    if (!product) return;
+    if (!inStock) return; // Prevent adding if not in stock
+    const token = localStorage.getItem('token');
+    if (!token) {
+      toast({
+        title: "Not Logged In",
+        description: "Please log in to add products to your cart.",
+        variant: "destructive",
+      });
+      navigate('/login');
+      return;
+    }
+    try {
+      await axios.post(
+        'https://shop.fradomos.al/cart/items',
+        { product_id: product.id, quantity },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      toast({
+        title: "Added to Cart",
+        description: `${product.name} has been added to your cart.`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err?.response?.data?.error || "Could not add to cart.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleToggleFavorite = () => {
@@ -117,14 +223,108 @@ const ProductDetail = () => {
 
   const isLiked = product ? isFavorite(product.id) : false;
 
-  const handleSubmitReview = () => {
-    toast({
-      title: "Review Submitted",
-      description: "Thank you for your review! It will be published after moderation.",
-    });
-    setNewReview('');
-    setUserRating(5);
+  const handleSubmitReview = async () => {
+    if (!product) return;
+    const token = localStorage.getItem('token');
+    if (!token) {
+      toast({
+        title: "Not Logged In",
+        description: "Please log in to submit a review.",
+        variant: "destructive",
+      });
+      navigate('/login');
+      return;
+    }
+    try {
+      await axios.post(
+        'https://shop.fradomos.al/product-reviews',
+        {
+          product_id: product.id,
+          rating: userRating,
+          comment: newReview,
+          verified: false
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      toast({
+        title: "Review Submitted",
+        description: "Thank you for your review! It will be published after moderation.",
+      });
+      setNewReview('');
+      setUserRating(5);
+      // Refresh reviews
+      const reviewsRes = await fetch(`https://shop.fradomos.al/product-reviews/product/${product.id}`);
+      const text = await reviewsRes.text();
+      let reviews: any[] = [];
+      try {
+        reviews = JSON.parse(text);
+      } catch {
+        reviews = [];
+      }
+      const normalizedReviews = reviews.map((r: any) => ({
+        id: r.id,
+        productId: r.product_id ?? id,
+        userName: r.reviewer_name || r.user_name || r.userName || r.name || r.buyer_name || r.user || 'Anonymous',
+        rating: r.rating,
+        comment: r.comment,
+        verified: r.verified,
+        date: r.created_at ? new Date(r.created_at).toLocaleDateString() : '',
+      }));
+      setProductReviews(normalizedReviews);
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err?.response?.data?.error || "Could not submit review.",
+        variant: "destructive",
+      });
+    }
   };
+
+  // Share handler
+  const handleShare = async () => {
+    if (!product) return;
+    const url = window.location.href;
+    const shareData = {
+      title: product.name,
+      text: product.description,
+      url,
+    };
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+      } catch (err) {
+        toast({
+          title: "Share Cancelled",
+          description: "Product was not shared.",
+        });
+      }
+    } else {
+      try {
+        await navigator.clipboard.writeText(url);
+        toast({
+          title: "Link Copied",
+          description: "Product link copied to clipboard.",
+        });
+      } catch {
+        toast({
+          title: "Error",
+          description: "Could not copy link.",
+          variant: "destructive",
+        });
+      }
+    }
+  };
+
+  // Helper to count reviews by star
+  const getStarCounts = () => {
+    const counts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    productReviews.forEach(r => {
+      const rating = Math.round(r.rating);
+      if (counts[rating] !== undefined) counts[rating]++;
+    });
+    return counts;
+  };
+  const starCounts = getStarCounts();
 
   return (
     <div className="min-h-screen bg-background">
@@ -139,8 +339,8 @@ const ProductDetail = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 mb-12">
           {/* Product Image */}
-          <div className="space-y-4">
-            <div className="aspect-square overflow-hidden rounded-lg bg-muted">
+          <div className="space-y-4 flex justify-center">
+            <div className="aspect-square overflow-hidden rounded-lg bg-muted max-w-sm w-full h-64 mx-auto flex items-center justify-center">
               <img 
                 src={product?.image} 
                 alt={product?.name}
@@ -152,13 +352,14 @@ const ProductDetail = () => {
           {/* Product Info */}
           <div className="space-y-6">
             <div>
-              <p className="text-sm text-muted-foreground mb-2">{product.category}</p>
+              
               <h1 className="text-3xl font-bold mb-4">{product.name}</h1>
               
               <div className="flex items-center gap-4 mb-4">
-                <StarRating rating={product.rating} showRating />
+                {/* Show correct review average and count */}
+                <StarRating rating={reviewStats.avg} showRating />
                 <span className="text-sm text-muted-foreground">
-                  ({product.reviewCount} reviews)
+                  ({reviewStats.count} reviews)
                 </span>
               </div>
 
@@ -189,7 +390,7 @@ const ProductDetail = () => {
             <div>
               <h3 className="font-semibold mb-3">Key Features</h3>
               <ul className="space-y-2">
-                {product.features?.map((feature, index) => (
+                {(features.length > 0 ? features : product.features)?.map((feature, index) => (
                   <li key={index} className="flex items-center gap-2">
                     <div className="h-1.5 w-1.5 rounded-full bg-primary" />
                     <span>{feature}</span>
@@ -217,14 +418,15 @@ const ProductDetail = () => {
                     variant="ghost"
                     size="sm"
                     onClick={() => setQuantity(quantity + 1)}
+                    disabled={!inStock || (stockQty !== null && quantity >= stockQty)}
                   >
                     +
                   </Button>
                 </div>
 
-                {product.inStock ? (
+                {inStock ? (
                   <Badge variant="outline" className="text-success border-success">
-                    In Stock
+                    {typeof stockQty === 'number' ? `${stockQty} in stock` : 'In Stock'}
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="text-destructive border-destructive">
@@ -238,24 +440,13 @@ const ProductDetail = () => {
                   size="lg"
                   className="flex-1 btn-shop"
                   onClick={handleAddToCart}
-                  disabled={!product.inStock}
+                  disabled={!inStock || (stockQty !== null && quantity > stockQty)}
                 >
                   <ShoppingCart className="h-5 w-5 mr-2" />
                   Add to Cart
                 </Button>
                 
-                <Button 
-                  variant="outline" 
-                  size="lg"
-                  onClick={handleToggleFavorite}
-                  className={isLiked ? 'text-red-500 border-red-500' : ''}
-                >
-                  <Heart 
-                    className={`h-5 w-5 ${isLiked ? 'fill-red-500' : ''}`} 
-                  />
-                </Button>
-                
-                <Button variant="outline" size="lg">
+                <Button variant="outline" size="lg" onClick={handleShare}>
                   <Share2 className="h-5 w-5" />
                 </Button>
               </div>
@@ -292,9 +483,9 @@ const ProductDetail = () => {
             <CardContent className="p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="text-center">
-                  <div className="text-4xl font-bold mb-2">{product.rating}</div>
-                  <StarRating rating={product.rating} size="lg" className="justify-center mb-2" />
-                  <p className="text-muted-foreground">Based on {product.reviewCount} reviews</p>
+                  <div className="text-4xl font-bold mb-2">{reviewStats.avg}</div>
+                  <StarRating rating={reviewStats.avg} size="lg" className="justify-center mb-2" />
+                  <p className="text-muted-foreground">Based on {reviewStats.count} reviews</p>
                 </div>
                 <div className="space-y-2">
                   {[5, 4, 3, 2, 1].map((stars) => (
@@ -304,12 +495,13 @@ const ProductDetail = () => {
                       <div className="flex-1 h-2 bg-muted rounded-full">
                         <div 
                           className="h-full bg-yellow-400 rounded-full" 
-                          style={{ width: `${Math.random() * 100}%` }}
+                          style={{
+                            width: reviewStats.count > 0
+                              ? `${(starCounts[stars] / reviewStats.count) * 100}%`
+                              : '0%'
+                          }}
                         />
                       </div>
-                      <span className="text-sm text-muted-foreground w-8">
-                        {Math.floor(Math.random() * 50)}
-                      </span>
                     </div>
                   ))}
                 </div>
@@ -362,36 +554,45 @@ const ProductDetail = () => {
 
           {/* Reviews List */}
           <div className="space-y-4">
-            {productReviews.map((review) => (
-              <Card key={review.id}>
-                <CardContent className="p-6">
-                  <div className="flex items-start gap-4">
-                    <Avatar>
-                      <AvatarFallback>
-                        {review.userName.charAt(0)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-medium">{review.userName}</p>
-                          <div className="flex items-center gap-2">
-                            <StarRating rating={review.rating} size="sm" />
-                            {review.verified && (
-                              <Badge variant="outline" className="text-xs">
-                                Verified Purchase
-                              </Badge>
-                            )}
+            {productReviews.length === 0 ? (
+              <div className="text-muted-foreground text-center">No reviews yet.</div>
+            ) : (
+              <>
+                {productReviews.slice(0, visibleReviews).map((review) => (
+                  <Card key={review.id}>
+                    <CardContent className="p-6">
+                      <div className="flex items-start gap-4">
+                        <Avatar>
+                          <AvatarFallback>
+                            {review.userName ? review.userName.charAt(0) : 'U'}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              {/* Always show the reviewer's name */}
+                              <p className="font-medium">{review.userName || 'Anonymous'}</p>
+                              <div className="flex items-center gap-2">
+                                <StarRating rating={review.rating} size="sm" />
+                              </div>
+                            </div>
+                            <p className="text-sm text-muted-foreground">{review.date || ''}</p>
                           </div>
+                          <p className="text-muted-foreground">{review.comment}</p>
                         </div>
-                        <p className="text-sm text-muted-foreground">{review.date}</p>
                       </div>
-                      <p className="text-muted-foreground">{review.comment}</p>
-                    </div>
+                    </CardContent>
+                  </Card>
+                ))}
+                {visibleReviews < productReviews.length && (
+                  <div className="text-center">
+                    <Button variant="outline" onClick={() => setVisibleReviews(v => v + 5)}>
+                      Load More
+                    </Button>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>

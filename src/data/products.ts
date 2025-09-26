@@ -25,7 +25,9 @@ export const products: Product[] = [
       'Quick charge technology'
     ],
     inStock: true,
-    product_id: ''
+    product_id: '',
+    category_name: '',
+    stock_quantity: undefined
   },
   {
     id: '2',
@@ -44,7 +46,9 @@ export const products: Product[] = [
       'Wireless charging'
     ],
     inStock: true,
-    product_id: ''
+    product_id: '',
+    category_name: '',
+    stock_quantity: undefined
   },
   {
     id: '3',
@@ -64,7 +68,9 @@ export const products: Product[] = [
       'Thunderbolt 4 ports'
     ],
     inStock: true,
-    product_id: ''
+    product_id: '',
+    category_name: '',
+    stock_quantity: undefined
   },
   {
     id: '4',
@@ -83,7 +89,9 @@ export const products: Product[] = [
       'ECG and blood oxygen monitoring'
     ],
     inStock: true,
-    product_id: ''
+    product_id: '',
+    category_name: '',
+    stock_quantity: undefined
   },
   {
     id: '5',
@@ -103,7 +111,9 @@ export const products: Product[] = [
       'Wireless charging case'
     ],
     inStock: false,
-    product_id: ''
+    product_id: '',
+    category_name: '',
+    stock_quantity: undefined
   },
   {
     id: '6',
@@ -122,7 +132,9 @@ export const products: Product[] = [
       'Ultra-fast wireless connectivity'
     ],
     inStock: true,
-    product_id: ''
+    product_id: '',
+    category_name: '',
+    stock_quantity: undefined
   },
 ];
 
@@ -206,10 +218,12 @@ export async function getProductById(product_id: string): Promise<Product | null
       // Use the direct image endpoint for <img src="">
       image: p.image ? (typeof p.image === 'string' && /^https?:\/\//i.test(p.image) ? p.image : (base ? `${base}${p.image.startsWith('/') ? p.image : `/${p.image}`}` : p.image)) : imageEndpointForProduct(prodId),
       category: p.category ?? p.category_name ?? 'Uncategorized',
+      category_name: p.category_name ?? p.category ?? 'Uncategorized',
       rating: p.rating != null ? Number(p.rating) : 0,
       reviewCount: p.review_count != null ? Number(p.review_count) : 0,
       features: Array.isArray(p.features) ? p.features : [],
       inStock: p.in_stock != null ? Boolean(p.in_stock) : ((p.stock_quantity ?? 0) > 0),
+      stock_quantity: p.stock_quantity !== undefined ? Number(p.stock_quantity) : undefined,
     };
   } catch (err) {
     console.error('getProductById error:', err);

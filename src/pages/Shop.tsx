@@ -25,6 +25,9 @@ const Shop = () => {
   // categories from API
   const [categories, setCategories] = useState<string[]>([]);
 
+  // search state
+  const [search, setSearch] = useState<string>('');
+
   useEffect(() => {
     let mounted = true;
     const loadCategories = async () => {
@@ -64,6 +67,7 @@ const Shop = () => {
             description: p.description,
             price: Number(p.price),
             rating: p.rating ?? 0,
+            reviewCount: p.review_count ?? 0, // <-- add reviewCount from API
             inStock: (p.stock_quantity ?? 0) > 0,
             image: imageUrl,
             category: p.category || 'Uncategorized',
@@ -86,8 +90,17 @@ const Shop = () => {
   }, []);
 
   const filteredAndSortedProducts = useMemo(() => {
-    // { changed code } - use productsData instead of imported products
     let filtered = productsData.filter(product => {
+      // Search filter
+      if (
+        search &&
+        !(
+          product.name?.toLowerCase().includes(search.toLowerCase()) ||
+          product.description?.toLowerCase().includes(search.toLowerCase())
+        )
+      ) {
+        return false;
+      }
       // Category filter
       if (filters.categories.length > 0 && !filters.categories.includes(product.category)) {
         return false;
@@ -131,7 +144,7 @@ const Shop = () => {
     }
 
     return filtered;
-  }, [filters, sortBy, productsData]);
+  }, [filters, sortBy, productsData, search]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -195,18 +208,38 @@ const Shop = () => {
               </div>
             </div>
 
+            {/* Search Bar */}
+            <div className="mb-6">
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search products..."
+                className="w-full sm:w-96 px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+
             {/* Products Grid */}
             {loading ? (
               <div className="text-center py-12">Loading products...</div>
             ) : error ? (
               <div className="text-center py-12 text-destructive">Error: {error}</div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+              // Use grid with gap-3 and auto-cols for better sizing and less margin
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 sm:gap-5">
                 {filteredAndSortedProducts.map((product) => {
                   // Ensure product.id is always present and correct
                   const id = product.product_id ?? product.id;
                   return (
-                    <ProductCard key={id} product={{ ...product, id }} />
+                    <ProductCard 
+                      key={id} 
+                      product={{ 
+                        ...product, 
+                        id, 
+                        rating: product.rating, // pass rating explicitly
+                        reviewCount: product.reviewCount // pass reviewCount explicitly
+                      }} 
+                    />
                   );
                 })}
               </div>
